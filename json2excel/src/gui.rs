@@ -8,6 +8,7 @@ pub struct AppState {
     dropped: Vec<PathBuf>,
     converted: Vec<ConvertedFile>,
     last_msg: String,
+    last_errors: String,
     busy: bool,
     want_save: bool,
 }
@@ -25,6 +26,7 @@ impl AppState {
             if !dropped.is_empty() {
                 self.dropped = dropped;
                 self.converted.clear();
+                self.last_errors.clear();
                 self.last_msg = if self.dropped.len() == 1 {
                     format!("Dropped file: {}", self.dropped[0].display())
                 } else {
@@ -45,8 +47,17 @@ impl AppState {
                 ui.add_space(10.0);
                 ui.group(|ui| {
                     ui.set_height(120.0);
-                    ui.vertical_centered(|ui| {
-                        ui.label(self.last_msg.clone());
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.label(self.last_msg.clone());
+                            if !self.last_errors.is_empty() {
+                                ui.separator();
+                                ui.label(
+                                    RichText::new(&self.last_errors)
+                                        .color(ui.visuals().error_fg_color),
+                                );
+                            }
+                        });
                     });
                 });
 
@@ -62,6 +73,7 @@ impl AppState {
                         {
                             self.dropped = p;
                             self.converted.clear();
+                            self.last_errors.clear();
                             self.last_msg = if self.dropped.len() == 1 {
                                 format!("Selected: {}", self.dropped[0].display())
                             } else {
@@ -80,13 +92,14 @@ impl AppState {
                         .clicked()
                     {
                         self.converted.clear();
+                        self.last_errors.clear();
                         self.busy = true;
                         self.want_save = false;
 
                         let files = self.dropped.clone();
                         let mut converted = Vec::new();
                         let mut ok = 0usize;
-                        let mut fail = 0usize;
+                        let mut errors = Vec::new();
 
                         for p in files {
                             match fs::read(&p) {
@@ -101,22 +114,27 @@ impl AppState {
                                             ok += 1;
                                         }
                                         Err(e) => {
-                                            eprintln!("convert error for {}: {e}", p.display());
-                                            fail += 1;
+                                            let msg =
+                                                format!("Convert error for {}: {e}", p.display());
+                                            eprintln!("{msg}");
+                                            errors.push(msg);
                                         }
                                     },
                                     Err(e) => {
-                                        eprintln!("decode error for {}: {e}", p.display());
-                                        fail += 1;
+                                        let msg = format!("Decode error for {}: {e}", p.display());
+                                        eprintln!("{msg}");
+                                        errors.push(msg);
                                     }
                                 },
                                 Err(e) => {
-                                    eprintln!("read error for {}: {e}", p.display());
-                                    fail += 1;
+                                    let msg = format!("Read error for {}: {e}", p.display());
+                                    eprintln!("{msg}");
+                                    errors.push(msg);
                                 }
                             }
                         }
 
+                        let fail = errors.len();
                         self.converted = converted;
                         self.busy = false;
                         self.want_save = ok > 0;
@@ -127,6 +145,7 @@ impl AppState {
                         } else {
                             "Conversion failed".to_string()
                         };
+                        self.last_errors = errors.join("\n");
                         ctx.request_repaint();
                     }
 
@@ -137,6 +156,7 @@ impl AppState {
                         )
                         .clicked()
                     {
+                        self.last_errors.clear();
                         if self.converted.len() == 1 {
                             let c = &self.converted[0];
                             let mut suggested = c.src.clone();
@@ -149,14 +169,17 @@ impl AppState {
                             {
                                 match save_xlsx(&dest, &c.rows, c.max_depth) {
                                     Ok(_) => self.last_msg = format!("Saved\n{}", dest.display()),
-                                    Err(e) => self.last_msg = format!("Save failed\n{e}"),
+                                    Err(e) => {
+                                        self.last_msg = "Save failed".to_string();
+                                        self.last_errors = format!("{e}");
+                                    }
                                 }
                             } else {
                                 self.last_msg = "Save cancelled.".into();
                             }
                         } else if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                             let mut ok = 0usize;
-                            let mut fail = 0usize;
+                            let mut errors = Vec::new();
                             for c in &self.converted {
                                 let base = format!(
                                     "{}.xlsx",
@@ -166,11 +189,14 @@ impl AppState {
                                 match save_xlsx(&dest, &c.rows, c.max_depth) {
                                     Ok(_) => ok += 1,
                                     Err(e) => {
-                                        eprintln!("save error: {e}");
-                                        fail += 1;
+                                        let msg =
+                                            format!("Save error for {}: {e}", dest.display());
+                                        eprintln!("{msg}");
+                                        errors.push(msg);
                                     }
                                 }
                             }
+                            let fail = errors.len();
                             self.last_msg = if fail == 0 {
                                 format!("Saved Files: {ok}\nFolder: {}", dir.display())
                             } else if ok == 0 {
@@ -178,6 +204,7 @@ impl AppState {
                             } else {
                                 format!("Partial success\nSaved: {ok}, Failed: {fail}")
                             };
+                            self.last_errors = errors.join("\n");
                         } else {
                             self.last_msg = "Save cancelled.".into();
                         }

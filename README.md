@@ -10,6 +10,7 @@ Two implementations available: Python (PyQt6) and Rust (egui).
 - Flattens nested objects/arrays into `Depth_1`, `Depth_2`, ..., `value` columns
 - Single or batch conversion
 - Works offline
+- Supports semi-JSON input (e.g., with trailing commas)
 
 ## Python Version
 
@@ -93,3 +94,6 @@ Binary output: `json2excel/target/release/json2excel[.exe]`
 **Python:**
 - Easier to modify
 - Familiar for Python developers
+
+## Updates
+- Supporting semi-json file: For now... trailing commas are now supported

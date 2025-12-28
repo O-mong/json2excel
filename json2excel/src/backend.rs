@@ -1,16 +1,16 @@
 use chardetng::EncodingDetector;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use regex::Regex;
 
 #[derive(Clone, Default)]
 pub struct ConvertedFile {
     pub src: PathBuf,
-    pub rows: Vec<Vec<Option<String>>>, 
+    pub rows: Vec<Vec<Option<String>>>,
     pub max_depth: usize,
 }
 
-
-pub fn detect_and_decode(bytes: &[u8]) -> anyhow::Result<String> {
+pub fn detect_and_decode(bytes: &[u8]) -> Result<String, String> {
     if let Ok(text) = std::str::from_utf8(bytes) {
         let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
         return Ok(text.to_string());
@@ -23,17 +23,16 @@ pub fn detect_and_decode(bytes: &[u8]) -> anyhow::Result<String> {
     let (decoded, _, had_errors) = encoding.decode(bytes);
 
     if had_errors {
-        anyhow::bail!(
+        return Err(format!(
             "Failed to decode file with detected encoding: {}",
             encoding.name()
-        );
+        ));
     }
 
     // Strip BOM if present
     let decoded = decoded.strip_prefix('\u{FEFF}').unwrap_or(&decoded);
     Ok(decoded.to_string())
 }
-
 
 fn count_depth(v: &Value) -> usize {
     match v {
@@ -66,7 +65,7 @@ fn walk(v: &Value, path: &mut Vec<String>, rows: &mut Vec<Vec<Option<String>>>, 
                 for (i, seg) in path.iter().enumerate() {
                     row[i] = Some(seg.clone());
                 }
-                row[max_depth] = None; 
+                row[max_depth] = None;
                 rows.push(row);
                 return;
             }
@@ -107,10 +106,15 @@ fn walk(v: &Value, path: &mut Vec<String>, rows: &mut Vec<Vec<Option<String>>>, 
     }
 }
 
-pub fn create_df(
-    json_text: &str,
-) -> anyhow::Result<(Vec<Vec<Option<String>>>, usize)> {
-    let v: Value = serde_json::from_str(json_text)?;
+fn formatting_json(json_text: &str) -> String {
+    let reg_expr = Regex::new(r"(,\s*)\}\s*$").unwrap();
+    let cleaned = reg_expr.replace(json_text, r"}");
+    cleaned.to_string()
+}
+
+pub fn create_df(json_text: &str) -> Result<(Vec<Vec<Option<String>>>, usize), String> {
+    let cleaned = formatting_json(json_text);
+    let v: Value = serde_json::from_str(&cleaned).map_err(|e| e.to_string())?;
     let max_depth = count_depth(&v).saturating_sub(1);
     let mut rows = Vec::new();
     let mut path = Vec::new();
@@ -124,30 +128,33 @@ pub fn save_xlsx(
     target: &Path,
     rows: &[Vec<Option<String>>],
     max_depth: usize,
-) -> anyhow::Result<()> {
+) -> Result<(), String> {
     use rust_xlsxwriter::Workbook;
 
     let mut wb = Workbook::new();
     let ws = wb.add_worksheet();
 
     for i in 0..max_depth {
-        ws.write(0, i as u16, format!("Depth_{}", i + 1))?;
+        ws.write(0, i as u16, format!("Depth_{}", i + 1))
+            .map_err(|e| e.to_string())?;
     }
-    ws.write(0, max_depth as u16, "value")?;
+    ws.write(0, max_depth as u16, "value")
+        .map_err(|e| e.to_string())?;
 
     for (r, row) in rows.iter().enumerate() {
         let rr = (r as u32) + 1;
         for (c, cell) in row.iter().enumerate() {
             if let Some(s) = cell {
-                ws.write(rr, c as u16, s)?;
+                ws.write(rr, c as u16, s).map_err(|e| e.to_string())?;
             }
         }
     }
 
     for i in 0..=max_depth {
-        ws.set_column_width(i as u16, 16.0)?;
+        ws.set_column_width(i as u16, 16.0)
+            .map_err(|e| e.to_string())?;
     }
 
-    wb.save(target)?;
+    wb.save(target).map_err(|e| e.to_string())?;
     Ok(())
 }
